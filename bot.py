@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 import aiohttp
 import os
+import datetime
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
@@ -13,6 +14,25 @@ dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
+DAILY_LIMIT = 3
+
+user_limits = {}
+
+def check_and_update_limit(user_id: int) -> str | None:
+    """Проверяет и обновляет лимит сообщений пользователя"""
+    today_str = datetime.date.today().isoformat()
+    
+    info = user_limits.get(user_id)
+    if info is None or info["date"] != today_str:
+        user_limits[user_id] = {"date": today_str, "count": 0}
+        return None
+    
+    if info["count"] >= DAILY_LIMIT:
+        return f"Вы исчерпали лимит ({DAILY_LIMIT}) сообщений на сегодня"
+    
+    info["count"] += 1
+    return None
+
 async def ask_perplexity(user_message):
     """Отправляет запрос в Perplexity API"""
     try:
@@ -21,10 +41,12 @@ async def ask_perplexity(user_message):
                 "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
                 "Content-Type": "application/json"
             }
+            
             payload = {
                 "model": "pplx-7b-online",
                 "messages": [{"role": "user", "content": user_message}]
             }
+            
             async with session.post("https://api.perplexity.ai/chat/completions", json=payload, headers=headers) as resp:
                 data = await resp.json()
                 return data["choices"][0]["message"]["content"]
@@ -37,10 +59,16 @@ async def start(message: types.Message):
 
 @dp.message()
 async def handle_message(message: types.Message):
+    limit_text = check_and_update_limit(message.from_user.id)
+    if limit_text is not None:
+        await message.answer(limit_text)
+        return
+    
     response = await ask_perplexity(message.text)
     await message.answer(response)
 
 async def main():
+    print("✅ Бот запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
